@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="refresh" content="15">
+<title>E19 140秒长视频 · 生产监控台</title>
+<style>
+  :root { --bg:#0b0e14; --card:#121826; --line:#232c3f; --text:#e8edf6; --muted:#8b96ab;
+          --pink:#ff4d9e; --cyan:#29d8ff; --green:#3ddc97; --amber:#ffc857; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:"PingFang SC","Microsoft YaHei",-apple-system,sans-serif; padding:28px 22px 60px; }
+  .wrap { max-width:980px; margin:0 auto; }
+  h1 { font-size:22px; margin-bottom:4px; }
+  h1 .live { color:var(--green); font-size:13px; letter-spacing:.1em; margin-left:8px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:24px; }
+  .sub b { color:var(--cyan); }
+  .stages { display:grid; gap:14px; margin-bottom:22px; }
+  .stage { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px 18px; }
+  .stage .head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; }
+  .stage .head b { font-size:15px; }
+  .stage .head .tag { font-size:12px; padding:2px 10px; border-radius:999px; }
+  .tag.run { background:rgba(41,216,255,.12); color:var(--cyan); }
+  .tag.done { background:rgba(61,220,151,.12); color:var(--green); }
+  .tag.pend { background:rgba(139,150,171,.12); color:var(--muted); }
+  .tag.err { background:rgba(255,77,158,.15); color:var(--pink); }
+  .bar { height:10px; background:#0d1220; border-radius:99px; overflow:hidden; margin:6px 0 6px; }
+  .bar i { display:block; height:100%; background:linear-gradient(90deg,var(--pink),var(--cyan)); border-radius:99px; transition:width .6s; }
+  .meta { font-size:12px; color:var(--muted); }
+  .final { background:linear-gradient(135deg, rgba(255,77,158,.10), rgba(41,216,255,.10));
+           border:1px solid rgba(255,77,158,.45); border-radius:14px; padding:18px; margin-bottom:22px; }
+  .final h3 { font-size:16px; margin-bottom:4px; }
+  .final video { width:100%; border-radius:10px; margin-top:10px; background:#000; }
+  .videos { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:22px; }
+  .vcard { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .vcard b { font-size:13px; }
+  .vcard video { width:100%; border-radius:8px; margin-top:8px; background:#000; }
+  .logs { background:#0d1220; border:1px solid var(--line); border-radius:12px; padding:14px 16px;
+          font-family:"SF Mono",Menlo,monospace; font-size:11.5px; color:#9fb2cc;
+          max-height:260px; overflow-y:auto; white-space:pre-wrap; line-height:1.7; }
+  .kv { display:flex; gap:18px; flex-wrap:wrap; font-size:12px; color:var(--muted); margin-bottom:18px; }
+  .kv span b { color:var(--text); }
+  a { color:var(--cyan); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>E19 · 140秒长视频 <span class="live" id="live">● LIVE</span></h1>
+  <div class="sub">三段式流水线：partA (k0-10) → partB (k11-21, Guide续接) → partC (k22-32, Guide续接) → 拼接 3371 帧 / 140.458s · 768×1376 9:16 · 页面每 15 秒自动刷新 · 数据每 20 秒自服务器拉取 · <a href="index.html">← 展示页</a></div>
+  <div class="kv" id="kv">加载中…</div>
+  <div class="stages" id="stages"></div>
+  <div id="finalbox"></div>
+  <div class="videos" id="videos"></div>
+  <h3 style="font-size:14px;color:var(--muted);margin-bottom:8px;">编排器日志（尾部）</h3>
+  <div class="logs" id="logs">…</div>
+</div>
+<script>
+fetch("status.json?t=" + Date.now()).then(r => r.json()).then(d => {
+  document.getElementById("kv").innerHTML =
+    `<span>状态 <b>${d.stage}</b></span><span>GPU显存 <b>${d.gpu_mem}</b></span>` +
+    `<span>内存 已用/空闲 <b>${Array.isArray(d.ram_used_free_gb) ? d.ram_used_free_gb.join(" / ") : d.ram_used_free_gb} GB</b></span>` +
+    `<span>服务器时间 <b>${d.now}</b></span>`;
+  const st = document.getElementById("stages");
+  st.innerHTML = "";
+  for (const name of ["partA","partB","partC"]) {
+    const p = d.parts[name];
+    const running = d.running === name;
+    let cls = "pend", label = "等待中", pct = 0, extra = "";
+    if (p.status === "running") {
+      cls = "run"; label = "生成中";
+      const enc = p.encodes ?? 0;
+      pct = Math.round(enc / p.expect * 100);
+      extra = `${enc} / ${p.expect} 段`;
+    } else if (p.status === "completed") {
+      cls = "done"; label = "✓ 完成"; pct = 100;
+      extra = `${p.expect} 段 · 已落盘`;
+    } else if (p.status === "error") {
+      cls = "err"; label = "✗ 出错";
+    }
+    st.innerHTML += `<div class="stage">
+      <div class="head"><b>${name} <span style="color:var(--muted);font-weight:400;font-size:12px">${p.prompt_id ? "· " + p.prompt_id.slice(0,8) : ""}</span></b>
+      <span class="tag ${cls}">${label}</span></div>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="meta">${extra || "尚未开始"}</div>
+    </div>`;
+  }
+  const fb = document.getElementById("finalbox");
+  if (d.final && d.final.exists) {
+    fb.innerHTML = `<div class="final"><h3>🎬 最终成片已生成（3371 帧 / 140.458s）</h3>
+      <div class="meta">时长 ${d.final.info}</div>
+      <video controls src="E19_Ref2VA_film_140s.mp4?t=${Date.now()}"></video></div>`;
+  } else {
+    fb.innerHTML = "";
+  }
+  const vs = document.getElementById("videos");
+  vs.innerHTML = "";
+  for (const [name, f, desc] of [["partA","e19_partA_00001_.mp4","第一幕 · 47.67s · 1144帧"],
+       ["partB","e19_partB_00001_.mp4","第二幕 · 47.67s · 1144帧(含22帧Guide)"],
+       ["partC","e19_partC_00001_.mp4","第三幕 · 46.96s · 1127帧(含22帧Guide)"]]) {
+    if (d.parts[name] && d.parts[name].file) {
+      vs.innerHTML += `<div class="vcard"><b>${name} · ${desc}</b><br>
+        <video controls preload="metadata" src="${f}"></video></div>`;
+    }
+  }
+  document.getElementById("logs").textContent = (d.orch_tail || []).join("\n") || "…";
+}).catch(() => {
+  document.getElementById("live").textContent = "● 数据拉取中";
+  document.getElementById("live").style.color = "#ffc857";
+});
+</script>
+</body>
+</html>
